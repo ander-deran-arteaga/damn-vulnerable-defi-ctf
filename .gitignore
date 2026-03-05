@@ -1,0 +1,31 @@
+# --- Secrets / local config ---
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# --- Foundry artifacts ---
+out/
+cache/
+broadcast/
+
+# --- If your repo generates these ---
+build/
+builds/
+coverage/
+reports/
+lcov.info
+
+# --- Node (in case some libs/tools use it) ---
+node_modules/
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# --- IDE ---
+.vscode/
+.idea/
