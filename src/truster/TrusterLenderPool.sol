@@ -22,11 +22,14 @@ contract TrusterLenderPool is ReentrancyGuard {
         nonReentrant
         returns (bool)
     {
+        // a: Because this contracts is also the pool, it has the tokens
         uint256 balanceBefore = token.balanceOf(address(this));
 
-        token.transfer(borrower, amount);
-        target.functionCall(data);
 
+        token.transfer(borrower, amount);
+        target.functionCall(data); // here is the error
+
+        // a: checks that the tokens have returned
         if (token.balanceOf(address(this)) < balanceBefore) {
             revert RepayFailed();
         }
@@ -34,3 +37,6 @@ contract TrusterLenderPool is ReentrancyGuard {
         return true;
     }
 }
+
+
+// ideal cases: i can make the balanceBefore be 0 (IMPOSSIBLE), 
