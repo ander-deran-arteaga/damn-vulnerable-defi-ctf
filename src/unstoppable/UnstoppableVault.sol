@@ -128,7 +128,8 @@ contract UnstoppableVault is IERC3156FlashLender, ReentrancyGuard, Owned, ERC462
 
     // Allow owner pausing/unpausing this contract
     function setPause(bool flag) external onlyOwner {
-        if (flag) _pause();
+        if (flag)
+            _pause();
         else _unpause();
     }
 }
